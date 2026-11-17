@@ -1,0 +1,5 @@
+.vscode/
+# the design build's intermediate files (design/build.sh)
+design/build/
+# the previous documents fig-to-dcf.sh keeps next to the new one
+data/*.dcf.*
