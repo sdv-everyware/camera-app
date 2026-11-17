@@ -25,6 +25,10 @@ its looper is a Wayland zone client (`libharry_app_platform_specific_client`), a
 - **No camera**: both zones show "Camera offline" with the reason (none connected, busy, no
   permission, no pictures, format not supported), the panel hears `off`, and the camera is
   looked for every 2 s: a replugged camera comes back by itself.
+- **A clip in place of the camera**: started with `--clip <file>` (the image's service is), the
+  app shows that clip while there is no camera, as stills and live like a camera's frames, and
+  the panel hears `on`. A camera that is plugged in takes over within 2 s; when it goes, the
+  clip is back. For a demo without a camera and for the emulator.
 
 A camera frame never goes through the reducer: the camera thread sends its pixels to the slot of
 its zone (`src/pictures.rs`, as harry's reference app does with its camera preview:
@@ -65,6 +69,31 @@ A limitation of the RB3, not of the app: its USB controller `a800000` does not s
 plugged in after boot. The device appears once the controller is probed again (as root:
 `echo a8f8800.usb > /sys/bus/platform/drivers/dwc3-qcom/unbind`, then the same into `bind`),
 and then the app takes it.
+
+## The clip
+
+`data/clip.mjpeg` (`/vendor/etc/camera-app/clip.mjpeg` in the image) is a Motion-JPEG file: JPEG
+pictures one after the other, which is what a UVC camera sends, so the clip goes through the same
+decoder and the same cut to the zones (`src/clip.rs` finds the pictures, `src/source.rs` chooses
+between the camera and the clip). It runs at `--clip-fps` (25) and starts again after its last
+picture.
+
+The clip is 9 s of morning fog on a lake, 1280 x 720 at 25 pictures a second, 225 pictures. It
+is made from "Morning Fog on Lake BRoll 10s" by Alabama Extension, which Wikimedia Commons has
+under CC0 1.0 (public domain):
+<https://commons.wikimedia.org/wiki/File:Morning_Fog_on_Lake_BRoll_10s.webm>. Its last second
+fades into its first, so the loop has no cut:
+
+```bash
+# on a computer with ffmpeg; the device needs none
+ffmpeg -i Morning_Fog_on_Lake_BRoll_10s.webm -an -filter_complex \
+  "[0:v]fps=25,scale=1280:720:flags=lanczos,split[a][b];\
+   [a]trim=1:10,setpts=PTS-STARTPTS[main];[b]trim=0:1,setpts=PTS-STARTPTS[head];\
+   [main][head]xfade=transition=fade:duration=1:offset=8,format=yuvj420p[v]" \
+  -map "[v]" -c:v mjpeg -q:v 8 -f mjpeg data/clip.mjpeg
+```
+
+Another clip: any file made with `-c:v mjpeg -f mjpeg`, at most 64 MB; `--clip-fps` is its rate.
 
 ## Why not harry's camera API
 
@@ -141,7 +170,8 @@ out_rb3/host/linux-x86/nativetest64/camera_app_host_test/camera_app_host_test
 ## How it starts
 
 A board with a USB camera inherits `product/camera.mk` (device-rb3 does): the image gets
-`camera_app` (`/vendor/bin`), its design (`/vendor/etc/camera-app/camera.dcf`) and the service
+`camera_app` (`/vendor/bin`), its design (`/vendor/etc/camera-app/camera.dcf`), the clip
+(`/vendor/etc/camera-app/clip.mjpeg`) and the service
 `everyware_camera` (`product/everyware_camera.rc`, installed in `/vendor/etc/init/everyware/`, a
 directory the board's root init imports). init starts it on `init.svc.smarthome=running`, as root
 with the group `camera` (`/dev/video*`) and `XDG_RUNTIME_DIR=/data/vendor/everyware/run`: the

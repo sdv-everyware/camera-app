@@ -47,6 +47,13 @@ pub struct CommandLineArgs {
     /// The largest frame taken from the camera, "WxH".
     #[arg(long, default_value = "1280x720")]
     pub max_size: String,
+    /// A Motion-JPEG file (clip.rs) shown while there is no camera: a demo, the emulator. Unset:
+    /// the offline state.
+    #[arg(long)]
+    pub clip: Option<PathBuf>,
+    /// Pictures a second of the clip.
+    #[arg(long, default_value_t = 25, value_parser = clap::value_parser!(u32).range(1..=60))]
+    pub clip_fps: u32,
     /// The panel's Wayland socket. Unset: har-display in $XDG_RUNTIME_DIR, else /data/local/tmp.
     #[arg(long)]
     pub wayland_socket: Option<PathBuf>,

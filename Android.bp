@@ -93,6 +93,15 @@ prebuilt_etc {
 // The modules that need neither the camera nor the panel (src/host_tests.rs: the choice of the
 // format, the crop, YUYV, the control socket and its lines, the schedule), on the host:
 // m camera_app_host_test, then out_rb3/host/linux-x86/nativetest64/camera_app_host_test/.
+// the clip that stands in for a camera (src/clip.rs; its source and licence: README.md)
+prebuilt_etc {
+    name: "camera_app_clip",
+    src: "data/clip.mjpeg",
+    sub_dir: "camera-app",
+    filename: "clip.mjpeg",
+    vendor: true,
+}
+
 rust_test_host {
     name: "camera_app_host_test",
     crate_root: "src/host_tests.rs",
