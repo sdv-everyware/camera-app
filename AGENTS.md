@@ -21,9 +21,11 @@ first.
 | `src/status.rs` | the camera's state in the zones' words; the still schedule; broken frames |
 | `src/state.rs`, `actions.rs`, `presenter.rs`, `ui_model.rs` | harry's flow; the `#camera/*` names |
 | `design/camera-patch.js`, `design/build.sh` | the two roots, `design/camera.fig`, `data/camera.dcf` |
+| `product/camera.mk`, `product/everyware_camera.rc` | camera_app, its design and its service in a board's image (README, How it starts) |
 
-The other side is smarthome-app: the nodes that show `#zone/camera` and `#zone/camera-live`, the
-LIVE chip and the control socket's client. The zones' tags and sizes and the socket's lines are
+The other side is smarthome-app (`src/camera.rs`, `design/camera-patch.js`): the nodes that show
+`#zone/camera` and `#zone/camera-live`, the LIVE chips and the control socket's client. The
+domain everyware_camera is device-rb3's (`sepolicy/vendor/everyware_camera.te`). The zones' tags and sizes and the socket's lines are
 shared: change both sides.
 
 ## Rules
