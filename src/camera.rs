@@ -45,6 +45,8 @@ const FRAME_WAIT: Duration = Duration::from_secs(2);
 const STALLS_BEFORE_REOPEN: u32 = 3;
 /// Frames that do not decode for this long: the camera counts as sending no pictures.
 const BROKEN_FOR: Duration = Duration::from_secs(5);
+/// How often the live rate is logged while live.
+const LIVE_LOG: Duration = Duration::from_secs(10);
 /// The pictures' keys in everyware_ui::images.
 pub const TILE_KEY: &str = "camera/tile";
 pub const LIVE_KEY: &str = "camera/live";
@@ -80,12 +82,15 @@ struct Worker {
     /// What each zone's frame shows (the store's slot and the picture's size), as the reducer
     /// was told; None: its design fill.
     shown: [Option<(ResourceToken, u32, u32)>; 2],
+    /// Live frames shown and the time spent on them since `meter_since`, for the log.
+    meter: (u32, Duration),
+    meter_since: Instant,
 }
 
 impl Worker {
     fn new(settings: Settings, modes: Receiver<bool>, actions: Sender<Actions<CameraAction>>, board: Arc<Board>) -> Self {
         let stills = Stills::new(settings.still_interval);
-        Worker { settings, modes, actions, board, live: false, status: Status::Starting, stills, good_at: None, shown: [None; 2] }
+        Worker { settings, modes, actions, board, live: false, status: Status::Starting, stills, good_at: None, shown: [None; 2], meter: (0, Duration::ZERO), meter_since: Instant::now() }
     }
 
     fn run(mut self) {
@@ -122,6 +127,8 @@ impl Worker {
                 if let Err(e) = camera.set_live(self.live) {
                     return e;
                 }
+                self.meter = (0, Duration::ZERO);
+                self.meter_since = Instant::now();
                 if !self.live {
                     // the full view is closed: it opens dark next time, not on an old frame
                     self.shown[Zone::Live as usize] = None;
@@ -169,6 +176,9 @@ impl Worker {
                 for (zone, (rgba, w, h)) in zones.iter().zip(pictures) {
                     self.show(*zone, rgba, w, h);
                 }
+                if self.live {
+                    self.count_live(now);
+                }
                 if still {
                     self.stills.taken(now);
                     let _ = self.actions.send(Actions::CustomAction(CameraAction::Still(clock_now())));
@@ -202,6 +212,24 @@ impl Worker {
         if self.shown[zone as usize] != now {
             self.shown[zone as usize] = now;
             let _ = self.actions.send(Actions::CustomAction(CameraAction::Picture(zone, image)));
+        }
+    }
+
+    /// One live frame shown (decoded at `start`); every LIVE_LOG the rate and the time a frame
+    /// took from the camera's buffer to the image store.
+    fn count_live(&mut self, start: Instant) {
+        self.meter.0 += 1;
+        self.meter.1 += start.elapsed();
+        let since = self.meter_since.elapsed();
+        if since >= LIVE_LOG {
+            let (n, spent) = self.meter;
+            log::info!(
+                "camera: live {:.1} fps, {:.1} ms a frame to decode and hand over",
+                f64::from(n) / since.as_secs_f64(),
+                spent.as_secs_f64() * 1000.0 / f64::from(n.max(1))
+            );
+            self.meter = (0, Duration::ZERO);
+            self.meter_since = Instant::now();
         }
     }
 
