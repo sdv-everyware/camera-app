@@ -93,8 +93,12 @@ impl Board {
 }
 
 /// Listens on `path` and hands the panel's mode (true: live) to `modes`. The board says the
-/// camera's state to the clients.
+/// camera's state to the clients. AddrInUse when another camera app serves the socket.
 pub fn start(path: &Path, modes: Sender<bool>) -> std::io::Result<Arc<Board>> {
+    // a socket someone answers on is another camera app's: not taken over
+    if UnixStream::connect(path).is_ok() {
+        return Err(std::io::Error::new(std::io::ErrorKind::AddrInUse, "another camera app serves it"));
+    }
     remove_stale(path)?;
     let listener = UnixListener::bind(path)?;
     // the runtime directory (0750) keeps others out already; the socket is the user's and its
@@ -178,8 +182,8 @@ fn serve(id: u64, mut stream: UnixStream, board: &Board, demand: &Mutex<Demand>,
     log::info!("camera: control client {id} gone");
 }
 
-/// The socket a run before left: removed when it is a socket (not a file or a link someone put
-/// there).
+/// The socket a run before left (nobody answers on it): removed when it is a socket, not a
+/// file or a link someone put there.
 fn remove_stale(path: &Path) -> std::io::Result<()> {
     match std::fs::symlink_metadata(path) {
         Ok(m) if m.file_type().is_socket() => std::fs::remove_file(path),

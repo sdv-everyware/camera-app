@@ -134,10 +134,18 @@ fn main() {
 
     let (modes_tx, modes_rx) = channel();
     let control = args.control_socket();
-    let board = control::start(&control, modes_tx).unwrap_or_else(|e| {
-        log::error!("camera: no control socket at {} ({e}): stills only, the panel hears nothing", control.display());
-        control::Board::none()
-    });
+    let board = match control::start(&control, modes_tx) {
+        Ok(board) => board,
+        // two camera apps would take the camera and the zones from each other
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            log::error!("camera: {} is served already ({e}): ending", control.display());
+            std::process::exit(1);
+        }
+        Err(e) => {
+            log::error!("camera: no control socket at {} ({e}): stills only, the panel hears nothing", control.display());
+            control::Board::none()
+        }
+    };
     camera::spawn(
         camera::Settings {
             device: args.device.clone(),
