@@ -19,37 +19,37 @@
 //!
 //! ```text
 //! V4L2 ──frame──► decode (MJPEG: libjpeg-turbo, YUYV: picture.rs) ──cut to the zone's aspect──►
-//!   everyware_ui::images (the looper's resource client) ──► harry redraws the zone that shows it
+//!   pictures.rs (the looper's resource client) ──► harry redraws the zone that shows it
 //! status changes ──► CameraAction (the offline state) and control::Board (the panel's chip)
 //! ```
 
 use crate::actions::CameraAction;
 use crate::capture::{Camera, CaptureError, Frame};
+use crate::config::Zone;
 use crate::control::Board;
 use crate::format::Pixels;
 use crate::jpeg;
 use crate::picture::{self, Rect};
-use crate::status::{Offline, Status, Stills};
-use crate::config::Zone;
-use har_types::resources::ResourceToken;
+use crate::pictures::Pictures;
+use crate::status::{Health, Offline, Status, Stills};
 use harry::reducer::Actions;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// How often the camera is looked for while there is none.
+/// How often the camera is looked for while there is none, and the pause after a stream that
+/// failed right after it started.
 const RETRY: Duration = Duration::from_secs(2);
 /// The longest wait for one frame; three in a row and the camera is opened again.
 const FRAME_WAIT: Duration = Duration::from_secs(2);
 const STALLS_BEFORE_REOPEN: u32 = 3;
 /// Frames that do not decode for this long: the camera counts as sending no pictures.
 const BROKEN_FOR: Duration = Duration::from_secs(5);
+/// The first frames after the stream starts are often not exposed yet: no still from them.
+const WARM_UP: Duration = Duration::from_millis(500);
 /// How often the live rate is logged while live.
 const LIVE_LOG: Duration = Duration::from_secs(10);
-/// The pictures' keys in everyware_ui::images.
-pub const TILE_KEY: &str = "camera/tile";
-pub const LIVE_KEY: &str = "camera/live";
 
 pub struct Settings {
     /// The device, or None: the first UVC capture device.
@@ -60,37 +60,62 @@ pub struct Settings {
     pub still_interval: Duration,
 }
 
-/// Starts the thread. `modes` says live (true) or stills; `actions` gets the pictures and the
-/// state for the zones, `board` the state for the panel.
-pub fn spawn(settings: Settings, modes: Receiver<bool>, actions: Sender<Actions<CameraAction>>, board: Arc<Board>) {
+/// Starts the thread. `modes` says live (true) or stills; `pictures` takes the zones' pictures,
+/// `actions` the zones' state, `board` the state for the panel.
+pub fn spawn(
+    settings: Settings,
+    modes: Receiver<bool>,
+    pictures: Pictures,
+    actions: Sender<Actions<CameraAction>>,
+    board: Arc<Board>,
+) {
     std::thread::Builder::new()
         .name("camera".to_string())
-        .spawn(move || Worker::new(settings, modes, actions, board).run())
+        .spawn(move || Worker::new(settings, modes, pictures, actions, board).run())
         .expect("spawn the camera thread");
 }
 
 struct Worker {
     settings: Settings,
     modes: Receiver<bool>,
+    pictures: Pictures,
     actions: Sender<Actions<CameraAction>>,
     board: Arc<Board>,
     live: bool,
     status: Status,
     stills: Stills,
-    /// The last good frame, for BROKEN_FOR.
-    good_at: Option<Instant>,
-    /// What each zone's frame shows (the store's slot and the picture's size), as the reducer
-    /// was told; None: its design fill.
-    shown: [Option<(ResourceToken, u32, u32)>; 2],
+    /// Since when frames do not decode.
+    health: Health,
+    /// When the stream started: WARM_UP.
+    started: Instant,
     /// Live frames shown and the time spent on them since `meter_since`, for the log.
     meter: (u32, Duration),
     meter_since: Instant,
 }
 
 impl Worker {
-    fn new(settings: Settings, modes: Receiver<bool>, actions: Sender<Actions<CameraAction>>, board: Arc<Board>) -> Self {
+    fn new(
+        settings: Settings,
+        modes: Receiver<bool>,
+        pictures: Pictures,
+        actions: Sender<Actions<CameraAction>>,
+        board: Arc<Board>,
+    ) -> Self {
         let stills = Stills::new(settings.still_interval);
-        Worker { settings, modes, actions, board, live: false, status: Status::Starting, stills, good_at: None, shown: [None; 2], meter: (0, Duration::ZERO), meter_since: Instant::now() }
+        Worker {
+            settings,
+            modes,
+            pictures,
+            actions,
+            board,
+            live: false,
+            status: Status::Starting,
+            stills,
+            health: Health::default(),
+            started: Instant::now(),
+            meter: (0, Duration::ZERO),
+            meter_since: Instant::now(),
+        }
     }
 
     fn run(mut self) {
@@ -100,11 +125,16 @@ impl Worker {
             match Camera::open(self.settings.device.as_deref(), self.settings.max, self.settings.live_fps, self.live) {
                 Ok(mut camera) => {
                     self.stills.reset();
-                    self.good_at = Some(Instant::now());
+                    self.health = Health::default();
+                    self.started = Instant::now();
                     let e = self.stream(&mut camera);
                     log::warn!("camera: {} stopped: {e:?}", camera.path().display());
                     self.publish(Status::Off(e.offline()));
-                    // the device closes here; a replugged camera gets its node again
+                    drop(camera);
+                    // a camera that opens and fails at once is not opened again at once
+                    if self.started.elapsed() < RETRY {
+                        self.wait(RETRY);
+                    }
                 }
                 Err(e) => {
                     if self.status != Status::Off(e.offline()) {
@@ -131,8 +161,10 @@ impl Worker {
                 self.meter_since = Instant::now();
                 if !self.live {
                     // the full view is closed: it opens dark next time, not on an old frame
-                    self.shown[Zone::Live as usize] = None;
-                    let _ = self.actions.send(Actions::CustomAction(CameraAction::Picture(Zone::Live, None)));
+                    match self.pictures.darken(Zone::Live) {
+                        Ok(told) => self.tell(Zone::Live, told),
+                        Err(e) => log::warn!("camera: the full view not darkened: {e}"),
+                    }
                 }
             }
             let frame = match camera.next(FRAME_WAIT) {
@@ -156,15 +188,16 @@ impl Worker {
         }
     }
 
-    /// One frame: the full view's picture when live, the tile's when a still is due.
+    /// One frame: the full view's picture when live, the tile's when a still is due. A zone
+    /// whose last picture the looper has not taken yet skips the frame.
     fn on_frame(&mut self, camera: &Camera, frame: &Frame) {
         let now = Instant::now();
-        let still = self.stills.due(now);
+        let still = self.stills.due(now) && now.duration_since(self.started) >= WARM_UP;
         let mut zones = Vec::new();
-        if still {
+        if still && self.pictures.ready(Zone::Tile) {
             zones.push(Zone::Tile);
         }
-        if self.live {
+        if self.live && self.pictures.ready(Zone::Live) {
             zones.push(Zone::Live);
         }
         if zones.is_empty() {
@@ -172,51 +205,40 @@ impl Worker {
         }
         match pictures(camera, frame, &zones) {
             Some(pictures) => {
-                self.good_at = Some(now);
+                self.health.good();
                 for (zone, (rgba, w, h)) in zones.iter().zip(pictures) {
-                    self.show(*zone, rgba, w, h);
+                    match self.pictures.send(*zone, rgba, w, h) {
+                        Ok(told) => self.tell(*zone, told),
+                        Err(e) => log::warn!("camera: picture of {zone:?} not shown: {e}"),
+                    }
                 }
-                if self.live {
-                    self.count_live(now);
-                }
-                if still {
+                if zones.contains(&Zone::Tile) {
                     self.stills.taken(now);
                     let _ = self.actions.send(Actions::CustomAction(CameraAction::Still(clock_now())));
+                }
+                if zones.contains(&Zone::Live) {
+                    self.count_live(now);
                 }
                 self.publish(Status::On);
             }
             None => {
                 log::debug!("camera: frame {} did not decode", frame.sequence);
-                if self.good_at.is_some_and(|t| now.duration_since(t) >= BROKEN_FOR) {
+                if self.health.bad(now, BROKEN_FOR) {
                     self.publish(Status::Off(Offline::NoPictures));
                 }
             }
         }
     }
 
-    /// The picture of `zone`: into the image store, and to the zone's frame when the frame
-    /// does not show that slot at that size yet (the first picture, another size, the full view
-    /// opened again). Otherwise only the pixels change, which the looper draws without a new
-    /// frame of the reducer.
-    fn show(&mut self, zone: Zone, rgba: Vec<u8>, width: u32, height: u32) {
-        let key = match zone {
-            Zone::Tile => TILE_KEY,
-            Zone::Live => LIVE_KEY,
-        };
-        if let Err(e) = everyware_ui::images::register_rgba(key, rgba, width, height) {
-            log::warn!("camera: picture of {zone:?} not shown: {e}");
-            return;
-        }
-        let image = everyware_ui::images::get(key);
-        let now = image.as_ref().map(|i| (i.id, i.width, i.height));
-        if self.shown[zone as usize] != now {
-            self.shown[zone as usize] = now;
-            let _ = self.actions.send(Actions::CustomAction(CameraAction::Picture(zone, image)));
+    /// A zone's frame shows another picture (its first, another size): the reducer hears it.
+    fn tell(&self, zone: Zone, told: Option<customizations::ImageContentData>) {
+        if let Some(content) = told {
+            let _ = self.actions.send(Actions::CustomAction(CameraAction::Picture(zone, Some(content))));
         }
     }
 
     /// One live frame shown (decoded at `start`); every LIVE_LOG the rate and the time a frame
-    /// took from the camera's buffer to the image store.
+    /// took from the camera's buffer to the looper.
     fn count_live(&mut self, start: Instant) {
         self.meter.0 += 1;
         self.meter.1 += start.elapsed();

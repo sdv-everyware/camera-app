@@ -13,11 +13,12 @@ first.
 | `src/main.rs` | the looper as a zone client (one display per zone), the reducer, the threads |
 | `src/config.rs` | the command line, the zones (tag, root, size: the contract with the panel), the sockets |
 | `src/camera.rs` | the camera thread: open, stream, stills and live, the offline state |
+| `src/pictures.rs` | the zones' picture slots in the renderers' storage, one frame in flight per zone |
 | `src/capture.rs` | V4L2 through v4l2r: the UVC device, its formats, the buffers, the newest frame |
 | `src/format.rs`, `src/picture.rs` | which format and rates; the cut to a zone's aspect, YUYV to RGBA |
 | `src/jpeg.rs`, `src/jpeg_shim.c` | MJPEG to RGBA with libjpeg-turbo (its error jumps stay in C) |
 | `src/control.rs`, `src/protocol.rs` | the control socket: live/still from the panel, on/off to it |
-| `src/status.rs` | the camera's state in the zones' words; the still schedule |
+| `src/status.rs` | the camera's state in the zones' words; the still schedule; broken frames |
 | `src/state.rs`, `actions.rs`, `presenter.rs`, `ui_model.rs` | harry's flow; the `#camera/*` names |
 | `design/camera-patch.js`, `design/build.sh` | the two roots, `design/camera.fig`, `data/camera.dcf` |
 
@@ -27,8 +28,8 @@ shared: change both sides.
 
 ## Rules
 
-- A frame of the same size goes to the looper only (`everyware_ui::images`), never through the
-  reducer: a reducer frame per camera frame is a full pre-render.
+- A camera frame goes to the looper only (`src/pictures.rs`), never through the reducer: a
+  reducer frame per camera frame is a full pre-render.
 - Logic that needs neither the camera nor the panel is a module with host tests
   (`src/host_tests.rs`, `m camera_app_host_test`).
 - A design's names are a contract with `src/ui_model.rs`: change both in one commit.

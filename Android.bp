@@ -1,0 +1,95 @@
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// camera_app: the panel's camera. A harry app without a screen of its own: it draws a USB
+// webcam's picture into two zones of the panel (smarthome-app) over Wayland, the tile
+// (#zone/camera, a still every few seconds) and the full view (#zone/camera-live, live video
+// while the panel shows it). Lives here and not in vendor/sdv-everyware because harry's
+// app-side crates (the zone client's looper, the app utils, har_log) are only visible to
+// modules under packages/services/display_safety.
+
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+// MJPEG frames to RGBA with libjpeg-turbo; its errors are caught in C (setjmp), never across
+// Rust frames. whole: a Rust binary links this archive alone, so it carries libjpeg.
+cc_library_static {
+    name: "libcamera_app_jpeg",
+    srcs: ["src/jpeg_shim.c"],
+    whole_static_libs: ["libjpeg"],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ],
+    vendor_available: true,
+    visibility: [":__subpackages__"],
+}
+
+rust_binary {
+    name: "camera_app",
+    crate_root: "src/main.rs",
+    srcs: [
+        "data/*.otf",
+    ],
+    rustlibs: [
+        "libclap",
+        "libcustomizations",
+        "libeveryware_ui",
+        "libhar_log",
+        "libhar_monitoring",
+        "libhar_platform_api",
+        "libhar_types",
+        "libharry",
+        // the looper of a zone client: it draws into the panel's zones, not to a display
+        "libharry_app_platform_specific_client",
+        "libharry_app_utils",
+        "liblibc",
+        "liblog_rust",
+        "libv4l2r",
+    ],
+    proc_macros: [
+        "libclap_derive",
+        "libderive_customizations",
+        "libhar_ui_model_derive",
+    ],
+    static_libs: ["libcamera_app_jpeg"],
+    vendor_available: true,
+    min_sdk_version: "29",
+    prefer_rlib: true,
+    ld_flags: ["-Wl,--no-as-needed"],
+    shared_libs: [
+        "libEGL",
+        "libGLESv2",
+    ],
+    arch: {
+        riscv64: {
+            enabled: false,
+        },
+    },
+}
+
+// The modules that need neither the camera nor the panel (src/host_tests.rs: the choice of the
+// format, the crop, YUYV, the control socket and its lines, the schedule), on the host:
+// m camera_app_host_test, then out_rb3/host/linux-x86/nativetest64/camera_app_host_test/.
+rust_test_host {
+    name: "camera_app_host_test",
+    crate_root: "src/host_tests.rs",
+    rustlibs: [
+        "liblibc",
+        "liblog_rust",
+    ],
+    test_options: {
+        unit_test: true,
+    },
+}

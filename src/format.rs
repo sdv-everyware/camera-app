@@ -26,7 +26,7 @@ pub const STILL_FPS: u32 = 5;
 pub enum Pixels {
     /// Motion JPEG: one JPEG per frame (libjpeg-turbo, jpeg_shim.c).
     Mjpeg,
-    /// YUV 4:2:2, Y0 U Y1 V (yuyv.rs).
+    /// YUV 4:2:2, Y0 U Y1 V (picture.rs).
     Yuyv,
 }
 

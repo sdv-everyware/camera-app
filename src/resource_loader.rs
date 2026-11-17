@@ -10,12 +10,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The renderer's resources: the pictures' storage (everyware_ui::images, where the camera
-//! frames go) and the fonts, which the layout helper that measures text gets too (main.rs).
+//! The renderer's resources: the pictures' storage (pictures.rs, where the camera frames go)
+//! and the fonts, which the layout helper that measures text gets too (main.rs).
 
 use har_platform_api::error::Error;
 use har_platform_api::graphics::{FontInfo, Renderer};
 use har_platform_api::looper::RendererHelper;
+use har_platform_api::resource_manager::ResourceManager as Storage;
 
 const INTER_REGULAR: &[u8] = include_bytes!("../data/inter_regular.otf");
 const INTER_BOLD: &[u8] = include_bytes!("../data/inter_bold.otf");
@@ -23,13 +24,16 @@ const INTER_BOLD: &[u8] = include_bytes!("../data/inter_bold.otf");
 pub const FONTS: &[(&str, u16, &[u8])] =
     &[("Inter", 400, INTER_REGULAR), ("Inter", 500, INTER_REGULAR), ("Inter", 600, INTER_BOLD)];
 
-#[derive(Default)]
-pub struct ResourceManager;
+/// What every renderer gets: the pictures' storage and the fonts.
+pub struct ResourceManager {
+    /// The camera's pictures; a clone shares the storage, so both displays' renderers and
+    /// pictures.rs see the same slots.
+    pub storage: Storage,
+}
 
 impl RendererHelper for ResourceManager {
     fn initialize_renderer(&self, renderer: &mut dyn Renderer) -> Result<(), Error> {
-        // one storage for both displays: a picture registered once is drawable in either
-        renderer.replace_raw_image_storage(everyware_ui::images::storage());
+        renderer.replace_raw_image_storage(self.storage.clone());
         for (family, weight, data) in FONTS {
             // SAFETY: OpenType fonts are supported.
             unsafe { renderer.load_font(vec![FontInfo::new(family, *weight)], data)? };

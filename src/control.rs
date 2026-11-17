@@ -213,3 +213,83 @@ fn peer(stream: &UnixStream) -> (i64, i64) {
         (-1, -1)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::sync::mpsc::{channel, Receiver};
+
+    /// A socket path of its own in the temp directory.
+    fn path(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("camera-app-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("har-camera")
+    }
+
+    fn line(r: &mut BufReader<UnixStream>) -> String {
+        let mut s = String::new();
+        r.read_line(&mut s).unwrap();
+        s
+    }
+
+    fn mode(rx: &Receiver<bool>) -> bool {
+        rx.recv_timeout(Duration::from_secs(5)).expect("a mode")
+    }
+
+    #[test]
+    fn a_client_hears_the_state_and_its_live_ends_with_it() {
+        let p = path("live");
+        let (tx, rx) = channel();
+        let board = start(&p, tx).unwrap();
+        let mode_bits = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode_bits, 0o660);
+        let client = UnixStream::connect(&p).unwrap();
+        let mut r = BufReader::new(client.try_clone().unwrap());
+        assert_eq!(line(&mut r), "off\n", "the state at once");
+        board.set(true);
+        assert_eq!(line(&mut r), "on\n");
+        (&client).write_all(b"live\n").unwrap();
+        assert!(mode(&rx));
+        (&client).write_all(b"still\nlive\n").unwrap();
+        assert!(!mode(&rx));
+        assert!(mode(&rx));
+        // the panel goes away while live: back to stills
+        drop(r);
+        drop(client);
+        assert!(!mode(&rx));
+    }
+
+    #[test]
+    fn an_unknown_word_ends_the_connection() {
+        let p = path("word");
+        let (tx, rx) = channel();
+        let _board = start(&p, tx).unwrap();
+        let client = UnixStream::connect(&p).unwrap();
+        let mut r = BufReader::new(client.try_clone().unwrap());
+        assert_eq!(line(&mut r), "off\n");
+        (&client).write_all(b"live\nzoom\n").unwrap();
+        assert!(mode(&rx));
+        // closed by the app: its live request ends with it
+        assert!(!mode(&rx));
+        assert_eq!(line(&mut r), "", "end of the connection");
+    }
+
+    #[test]
+    fn a_served_socket_is_not_taken_over_a_stale_one_is_and_a_file_is_left() {
+        let p = path("served");
+        let (tx, _rx) = channel();
+        let _first = start(&p, tx.clone()).unwrap();
+        assert_eq!(start(&p, tx.clone()).err().map(|e| e.kind()), Some(std::io::ErrorKind::AddrInUse));
+        // a socket nobody answers on: what a run before left
+        let stale = path("stale");
+        drop(UnixListener::bind(&stale).unwrap());
+        assert!(start(&stale, tx.clone()).is_ok());
+        // a plain file is not removed
+        let file = path("file");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(start(&file, tx).is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"x");
+    }
+}

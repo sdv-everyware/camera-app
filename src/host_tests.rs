@@ -12,9 +12,11 @@
 
 //! The modules that need neither the camera nor the panel, as host tests
 //! (`m camera_app_host_test`): the choice of the format and its rates, the cut to a zone's
-//! aspect and YUYV, the control socket's lines and the live demand, the still schedule and
-//! the offline words.
+//! aspect and YUYV, the control socket (a socket in the temp directory) with its lines and the
+//! live demand, the still schedule, broken frames and the offline words.
 
+#[allow(dead_code)]
+mod control;
 #[allow(dead_code)]
 mod format;
 #[allow(dead_code)]

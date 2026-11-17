@@ -98,6 +98,27 @@ impl Stills {
     }
 }
 
+/// Whether frames decode: a window of broken frames that starts at the first one and ends
+/// with a good one. One broken frame now and then (a still's frame cut short on the bus) is not
+/// the camera failing.
+#[derive(Debug, Default)]
+pub struct Health {
+    broken_since: Option<Instant>,
+}
+
+impl Health {
+    /// A frame decoded.
+    pub fn good(&mut self) {
+        self.broken_since = None;
+    }
+
+    /// A frame did not decode at `now`: true when none has for `limit`.
+    pub fn bad(&mut self, now: Instant, limit: Duration) -> bool {
+        let since = *self.broken_since.get_or_insert(now);
+        now.saturating_duration_since(since) >= limit
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +133,23 @@ mod tests {
         assert!(s.due(t0 + Duration::from_secs(5)));
         s.reset();
         assert!(s.due(t0));
+    }
+
+    #[test]
+    fn one_broken_frame_is_not_a_broken_camera() {
+        let t0 = Instant::now();
+        let limit = Duration::from_secs(5);
+        let mut h = Health::default();
+        // a still's frame fails 5 s after the last good one: the window starts now
+        assert!(!h.bad(t0 + Duration::from_secs(5), limit));
+        h.good();
+        // frames that keep failing for the whole limit
+        let mut h = Health::default();
+        assert!(!h.bad(t0, limit));
+        assert!(!h.bad(t0 + Duration::from_millis(4999), limit));
+        assert!(h.bad(t0 + limit, limit));
+        h.good();
+        assert!(!h.bad(t0 + Duration::from_secs(20), limit));
     }
 
     #[test]

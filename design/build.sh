@@ -30,7 +30,7 @@ FIG="$HERE/camera.fig"
 node "$FIGMA/roundtrip.js" "$UI/design/library-base.fig" "$FIG" "$HERE/camera-patch.js"
 echo "built $FIG"
 DCF_ROOT='#camera-tile' DCF_NODES='#camera-live' \
-DCF_CHECK='#camera-live #camera/tile/picture #camera/tile/time-chip #camera/tile/time #camera/tile/offline/title #camera/tile/offline/detail #camera/live/picture #camera/live/offline/title #camera/live/offline/detail' \
+DCF_CHECK='#camera-live #camera/tile/picture #camera/tile/time-chip #camera/tile/time #camera/tile/offline #camera/tile/offline/title #camera/tile/offline/detail #camera/live/picture #camera/live/offline #camera/live/offline/title #camera/live/offline/detail' \
     "$TOP/vendor/sdv-everyware/everyware/scripts/fig-to-dcf.sh" "$FIG" "$HERE/../data/camera.dcf"
 # the last line: the file to give the user for a review
 echo "review in Figma (File > Import): $FIG"

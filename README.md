@@ -6,7 +6,7 @@ its looper is a Wayland zone client (`libharry_app_platform_specific_client`), a
 (`smarthome-app`, the HAR master) shows its two displays in the nodes that name their zones.
 
 ```
- webcam ─V4L2 (MJPEG/YUYV)─► camera thread ─RGBA─► everyware_ui::images ─► looper (2 displays)
+ webcam ─V4L2 (MJPEG/YUYV)─► camera thread ─RGBA─► pictures.rs (a slot per zone) ─► looper (2 displays)
                                │                                            │ har_zone, dmabuf
                                └─state─► reducer ─► presenter ─► UI model ──┘
                                                                             ▼
@@ -26,10 +26,12 @@ its looper is a Wayland zone client (`libharry_app_platform_specific_client`), a
   permission, no pictures, format not supported), the panel hears `off`, and the camera is
   looked for every 2 s: a replugged camera comes back by itself.
 
-A frame of the same size never goes through the reducer: the camera thread puts its pixels into
-the image store, and the looper redraws only the display that shows them
-(`ResourceManagerClient::update`). The reducer runs for a new picture size, a still's time and
-a change of the state.
+A camera frame never goes through the reducer: the camera thread sends its pixels to the slot of
+its zone (`src/pictures.rs`, as harry's reference app does with its camera preview:
+`ResourceManagerClient::update`), and the looper redraws only the display that shows the slot.
+At most one frame per zone is on its way to the looper; a slow panel gets fewer frames. The
+reducer runs for a picture's first size, a still's time and a change of the state. Closing the
+full view puts one dark pixel into its slot, so it opens dark next time, not on an old frame.
 
 ## The camera
 
@@ -69,7 +71,10 @@ client does not connect again, and its service starts it again.
 
 `design/camera-patch.js` draws the two roots, `#camera-tile` (904 x 360) and `#camera-live`
 (1920 x 1080): a plain frame for the picture, the time chip, the offline state. Their sizes are
-the panel's nodes; a node of another size gets the zone's picture scaled.
+the panel's nodes and must stay so: harry draws a zone with the node's size as the source rect
+(a buffer of another size lands 1:1 in the corner), and a zone client keeps the size of its
+first configure (a later one is only logged). A zone hidden when it binds (the full view) gets
+no configure and renders the size asked for (`config.rs`, `Zone::size`).
 
 ```bash
 packages/services/display_safety/utils/camera-app/design/build.sh   # design/camera.fig, data/camera.dcf

@@ -16,7 +16,7 @@
 //! per zone, and the panel shows each in the node that names the zone's tag.
 //!
 //! ```text
-//! webcam ─V4L2─► camera thread ─pictures─► everyware_ui::images ─► looper ─har_zone─► panel
+//! webcam ─V4L2─► camera thread ─pictures─► pictures.rs (slots) ─► looper ─har_zone─► panel
 //!                  ▲      └─state─► reducer ─► presenter ─► UI model ─┘   #zone/camera (tile)
 //!   panel ─"live"/"still"─► control socket ◄─"on"/"off"─┘              #zone/camera-live
 //! ```
@@ -52,6 +52,7 @@ mod control;
 mod format;
 mod jpeg;
 mod picture;
+mod pictures;
 mod presenter;
 mod protocol;
 mod resource_loader;
@@ -86,6 +87,22 @@ fn main() {
     let wayland = args.wayland_socket();
     let panel = wait_for_panel(&wayland);
 
+    // The control socket first: a second camera app ends here, before it binds the zones (the
+    // first one's zones would leave their planes when it unbinds them).
+    let (modes_tx, modes_rx) = channel();
+    let control = args.control_socket();
+    let board = match control::start(&control, modes_tx) {
+        Ok(board) => board,
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            log::error!("camera: {} is served already ({e}): ending", control.display());
+            std::process::exit(1);
+        }
+        Err(e) => {
+            log::error!("camera: no control socket at {} ({e}): stills only, the panel hears nothing", control.display());
+            control::Board::none()
+        }
+    };
+
     let displays = config::displays(&wayland);
     let performance_monitor = Arc::new(DefaultPerformanceMonitor::new().expect("Error creating performance monitor."));
     // No side effects: the reducer still needs a channel for them.
@@ -113,8 +130,10 @@ fn main() {
     );
     let actions = reducer.action_tx();
     let (looper_tx, looper_rx) = channel();
-    // a camera frame of a size the renderer has goes to it through the looper (images.rs)
-    everyware_ui::images::set_client(create_resource_manager_client(looper_tx.clone()));
+    // the zones' pictures: a slot each in the renderers' storage, new pixels through the looper
+    let storage = har_platform_api::resource_manager::ResourceManager::new();
+    let pictures = pictures::Pictures::new(&storage, create_resource_manager_client(looper_tx.clone()))
+        .expect("Cannot make the pictures' slots");
 
     log::info!("camera: the design from {}", args.data_path);
     let reducer_thread =
@@ -129,23 +148,9 @@ fn main() {
             .spawn();
 
     // The zones: one Wayland connection to the panel each, bound to the zone's tag.
-    let mut looper = create_looper(&displays);
+    let mut looper = create_looper(&displays, storage);
     looper.set_ui_event_listener(UiListener::new(actions.clone())).expect("Cannot set the UI event listener");
 
-    let (modes_tx, modes_rx) = channel();
-    let control = args.control_socket();
-    let board = match control::start(&control, modes_tx) {
-        Ok(board) => board,
-        // two camera apps would take the camera and the zones from each other
-        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-            log::error!("camera: {} is served already ({e}): ending", control.display());
-            std::process::exit(1);
-        }
-        Err(e) => {
-            log::error!("camera: no control socket at {} ({e}): stills only, the panel hears nothing", control.display());
-            control::Board::none()
-        }
-    };
     camera::spawn(
         camera::Settings {
             device: args.device.clone(),
@@ -154,6 +159,7 @@ fn main() {
             still_interval: Duration::from_secs(args.still_interval),
         },
         modes_rx,
+        pictures,
         actions,
         board,
     );
@@ -198,7 +204,10 @@ fn watch_panel(socket: std::path::PathBuf, ino: u64) {
         .expect("spawn the panel watch");
 }
 
-fn create_looper(displays: &[config::Display]) -> impl Looper<ResourceManager> {
+fn create_looper(
+    displays: &[config::Display],
+    storage: har_platform_api::resource_manager::ResourceManager,
+) -> impl Looper<ResourceManager> {
     let mut options = displays.iter().map(|d| {
         let (width, height) = d.zone.size();
         LooperOptions {
@@ -215,7 +224,7 @@ fn create_looper(displays: &[config::Display]) -> impl Looper<ResourceManager> {
     });
     let first = options.next().expect("At least one zone");
     let mut looper =
-        harry_app_platform_specific::create_looper(first, ResourceManager).expect("Cannot connect to the panel's zones");
+        harry_app_platform_specific::create_looper(first, ResourceManager { storage }).expect("Cannot connect to the panel's zones");
     options.for_each(|o| {
         let id = o.display_id;
         looper.add_display(o).unwrap_or_else(|e| panic!("Cannot add the zone of display {id:?}: {e:?}"));
