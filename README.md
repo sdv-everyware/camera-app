@@ -105,11 +105,11 @@ adb shell 'echo live | nc -U /data/vendor/everyware/run/har-camera'
 
 ## The panel
 
-The panel's side is not in this repository. It needs: the tile's `#camera/feed` as zone
-`#zone/camera` (`--wayland-zones`, there today), a full view with a frame showing zone
-`#zone/camera-live`, the LIVE chip bound to `on`/`off`, and a connection to the control socket.
-When the panel goes away (its Wayland socket is gone or new), `camera_app` ends: harry's zone
-client does not connect again, and its service starts it again.
+The panel's side is smarthome-app's `src/camera.rs` and `design/camera-patch.js`: the tile's
+`#camera/feed` shows zone `#zone/camera` (`--wayland-zones`), the full view `#camera-view` shows
+zone `#zone/camera-live`, the LIVE chips follow `on`/`off`, and the panel connects to the control
+socket. When the panel goes away (its Wayland socket is gone or new), `camera_app` ends: harry's
+zone client does not connect again, and its service starts it again (How it starts).
 
 ## The design
 
@@ -138,16 +138,33 @@ bash -c 'source device/rb3/sdv_media_db845c/tools/env.sh >/dev/null && m camera_
 out_rb3/host/linux-x86/nativetest64/camera_app_host_test/camera_app_host_test
 ```
 
+## How it starts
+
+A board with a USB camera inherits `product/camera.mk` (device-rb3 does): the image gets
+`camera_app` (`/vendor/bin`), its design (`/vendor/etc/camera-app/camera.dcf`) and the service
+`everyware_camera` (`product/everyware_camera.rc`, installed in `/vendor/etc/init/everyware/`, a
+directory the board's root init imports). init starts it on `init.svc.smarthome=running`, as root
+with the group `camera` (`/dev/video*`) and `XDG_RUNTIME_DIR=/data/vendor/everyware/run`: the
+panel's Wayland socket there is root's alone. `camera_app` waits until that socket answers, and
+ends when the panel goes away; init starts it again.
+
+It runs in the SELinux domain `everyware_camera` (device-rb3 `sepolicy/vendor/everyware_camera.te`):
+`/dev/video*` and sysfs to find the camera, the GPU's render node, its design, the panel's Wayland
+socket, its control socket in the runtime directory (labeled `everyware_camera_socket`, which the
+panel may connect to) and `setsched` for its decode thread; no network. The panel's other
+processes and their domains: everyware's `docs/concepts/9-starting-the-app.md`.
+
 ## Run (RB3, from adb)
 
-The panel runs as root with `--wayland-zones`; its runtime directory
-`/data/vendor/everyware/run` is root's, so `camera_app` runs as root too. Nothing starts it in
-the image yet: a service and a SELinux domain for it are a proposal, not made.
+The service runs it in the image (`adb logcat -s camera-app`; `stop everyware_camera`, `start
+everyware_camera` as root). A build of your own runs by hand as root after `stop
+everyware_camera` (two camera apps refuse each other):
 
 ```bash
 adb root
+adb shell stop everyware_camera
 adb shell mkdir -p /data/local/tmp/camera-app
-adb push out_rb3/target/product/sdv_media_db845c/system/bin/camera_app /data/local/tmp/camera-app/
+adb push out_rb3/target/product/sdv_media_db845c/vendor/bin/camera_app /data/local/tmp/camera-app/
 adb push packages/services/display_safety/utils/camera-app/data/camera.dcf /data/local/tmp/camera-app/
 adb shell 'cd /data/local/tmp/camera-app; XDG_RUNTIME_DIR=/data/vendor/everyware/run \
     LD_LIBRARY_PATH=/system/lib64:/vendor/lib64 nohup ./camera_app > camera-app.log 2>&1 &'

@@ -64,7 +64,9 @@ rust_binary {
         "libhar_ui_model_derive",
     ],
     static_libs: ["libcamera_app_jpeg"],
-    vendor_available: true,
+    // on the vendor partition, where the board's policy labels it (everyware_camera); its
+    // service is product/everyware_camera.rc
+    vendor: true,
     min_sdk_version: "29",
     prefer_rlib: true,
     ld_flags: ["-Wl,--no-as-needed"],
@@ -77,6 +79,15 @@ rust_binary {
             enabled: false,
         },
     },
+}
+
+// The design, at camera_app's data path in the image: /vendor/etc/camera-app/camera.dcf.
+prebuilt_etc {
+    name: "camera_app_dcf",
+    src: "data/camera.dcf",
+    sub_dir: "camera-app",
+    filename: "camera.dcf",
+    vendor: true,
 }
 
 // The modules that need neither the camera nor the panel (src/host_tests.rs: the choice of the

@@ -83,8 +83,8 @@ fn main() {
         std::process::exit(2);
     };
 
-    // The panel serves the zones. Started before it (at boot), the app waits for its socket;
-    // a looper without the panel would fail.
+    // The panel serves the zones. Started before it (at boot, or by init again after the panel
+    // went away), the app waits until its socket answers: a looper without the panel aborts.
     let wayland = args.wayland_socket();
     let panel = wait_for_panel(&wayland);
 
@@ -171,12 +171,20 @@ fn main() {
     reducer_thread.join().expect("Error reported on the reducer thread.");
 }
 
-/// Waits until the panel's socket is there; its inode, to tell a new panel by.
+/// Waits until the panel answers on its socket (a file left by a panel that stopped refuses the
+/// connection); the socket's inode, to tell a new panel by.
 fn wait_for_panel(socket: &Path) -> u64 {
     let mut logged = false;
     loop {
-        match std::fs::metadata(socket) {
-            Ok(m) => return m.ino(),
+        // the probe's connection ends at once: the panel sees a client come and go
+        let answered = std::os::unix::net::UnixStream::connect(socket).map(drop);
+        match answered.and_then(|()| std::fs::metadata(socket)) {
+            Ok(m) => {
+                if logged {
+                    log::info!("camera: the panel answers on {}", socket.display());
+                }
+                return m.ino();
+            }
             Err(e) => {
                 if !logged {
                     log::info!("camera: waiting for the panel's socket {} ({e})", socket.display());
