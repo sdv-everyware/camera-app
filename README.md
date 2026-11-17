@@ -46,6 +46,46 @@ libjpeg-turbo (`src/jpeg_shim.c`, the tree's external/libjpeg-turbo), YUYV conve
 adb shell /data/local/tmp/camera-app/camera_app --probe    # the UVC devices and their formats
 ```
 
+The camera's node is not fixed: on the RB3 the SoC's codec takes `video0` and `video1` after a
+cold boot and the webcam comes as `video2` (its metadata node `video3`). The app looks the camera
+up again every 2 s while it has none, so a camera plugged in later is picked up.
+
+Without a webcam: `--device /dev/videoN` takes any V4L2 capture node that offers MJPEG or YUYV,
+for example a v4l2loopback device that ffmpeg feeds with a clip (`-f v4l2 -pix_fmt yuyv422`); the
+search without `--device` takes UVC devices only. The RB3's kernel has neither v4l2loopback nor
+vivid, so there the test needs the webcam; harry's own emulated camera
+(`reference/camera/emulated-camera`) serves harry's camera API, which camera_app does not use
+(below, "Why not harry's camera API").
+
+A limitation of the RB3, not of the app: its USB controller `a800000` does not see a device
+plugged in after boot. The device appears once the controller is probed again (as root:
+`echo a8f8800.usb > /sys/bus/platform/drivers/dwc3-qcom/unbind`, then the same into `bind`),
+and then the app takes it.
+
+## Why not harry's camera API
+
+harry has a camera path of its own: `har_platform_api::camera` (`ICameraManager`,
+`ICameraDevice`) with the V4L2 implementation in `reference/platforms/har-platform-android/src/
+camera/implementation.rs`; its frames reach a scene the same way camera_app's do, as pixels of a
+resource token (`ResourceManagerClient::update`, an image node). camera_app uses that last part
+(`src/pictures.rs`) and the same V4L2 crate (v4l2r), but captures by itself, because the
+implementation cannot do what the panel needs without a change of harry:
+
+- no MJPEG: it converts AB24, AR24, BA24, RX24, XR24, NV12, RGB3 and YUYV only, and keeps the
+  device's current format (a UVC camera's first, MJPEG on this webcam, whose YUYV ends at 800x480);
+- a fixed 640 x 360 picture, whatever the camera and the zone;
+- an unplugged camera ends the process: `dqbuf(..).expect(..)` in the capture thread, and Soong
+  builds with `panic=abort`;
+- the frame rate is a sleep after each frame (the stream runs at the camera's rate, the driver's
+  queue makes the pictures late), not `VIDIOC_S_PARM`; no still rate;
+- the devices are listed once, by opening every `/dev/video*` (the SoC's codecs too), so a camera
+  plugged in later is not seen until the list is empty.
+
+The changes harry would need, small and upstreamable: MJPEG (libjpeg-turbo) and the format's
+choice in `start`, the dequeue's errors as stream events, the rate by `VIDIOC_S_PARM`, the newest
+frame instead of a queue, the devices by capability and again on request. With them camera_app
+could take its frames from `ICameraDevice`.
+
 ## The control socket
 
 `camera_app` listens on `har-camera` next to the panel's Wayland socket (`$XDG_RUNTIME_DIR`,
