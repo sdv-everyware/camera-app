@@ -51,6 +51,7 @@ mod config;
 mod control;
 mod format;
 mod jpeg;
+mod meter;
 mod picture;
 mod pictures;
 mod presenter;

@@ -209,7 +209,10 @@ pub fn probe(paths: &[PathBuf]) -> String {
 pub struct Frame {
     pub index: u32,
     pub len: usize,
+    /// The driver's frame counter.
     pub sequence: u32,
+    /// Older frames that were ready and given back for this one (the app was behind).
+    pub stale: u32,
 }
 
 /// The camera, streaming.
@@ -358,17 +361,19 @@ impl Camera {
             }
             self.wait(left)?;
             let mut newest: Option<Frame> = None;
+            let mut stale = 0;
             loop {
                 match ioctl::dqbuf::<ioctl::V4l2Buffer>(&self.file, QUEUE) {
                     Ok(buf) => {
                         let len = (*buf.get_first_plane().bytesused as usize).min(self.maps[buf.index() as usize].len());
-                        let frame = Frame { index: buf.index(), len, sequence: buf.sequence() };
+                        let frame = Frame { index: buf.index(), len, sequence: buf.sequence(), stale: 0 };
                         if buf.flags().contains(BufferFlags::ERROR) || len == 0 {
                             self.give_back(frame)?;
                             continue;
                         }
                         if let Some(older) = newest.replace(frame) {
                             self.give_back(older)?;
+                            stale += 1;
                         }
                     }
                     Err(e) => {
@@ -381,7 +386,8 @@ impl Camera {
                     }
                 }
             }
-            if let Some(frame) = newest {
+            if let Some(mut frame) = newest {
+                frame.stale = stale;
                 return Ok(frame);
             }
         }

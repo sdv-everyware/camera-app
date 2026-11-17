@@ -99,8 +99,10 @@ int camera_jpeg_decode_rgba(const uint8_t* src, size_t src_len, uint8_t* dst, si
         return CAMERA_JPEG_TOO_LARGE;
     }
     cinfo.out_color_space = JCS_EXT_RGBA;
-    /* the fast integer IDCT: a webcam frame does not need the slow one's last bit */
+    /* the fast integer IDCT and the plain chroma upsampling: a webcam frame needs neither the
+       slow IDCT's last bit nor the smoothed chroma, and a live frame has 33 ms */
     cinfo.dct_method = JDCT_IFAST;
+    cinfo.do_fancy_upsampling = FALSE;
     jpeg_start_decompress(&cinfo);
     const size_t stride = (size_t)cinfo.output_width * 4;
     while (cinfo.output_scanline < cinfo.output_height) {

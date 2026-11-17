@@ -36,9 +36,13 @@ extern "C" {
 }
 
 /// The JPEG `frame` as RGBA, at most `max_width` x `max_height` (the camera's format): the
-/// pixels with their width and height.
-pub fn decode_rgba(frame: &[u8], max_width: u32, max_height: u32) -> Result<(Vec<u8>, u32, u32), JpegError> {
-    let mut dst = vec![0u8; max_width as usize * max_height as usize * 4];
+/// pixels with their width and height. The pixels go into `dst`, a buffer of an earlier frame
+/// when the caller has one (no allocation; its old pixels are overwritten), else a new one.
+pub fn decode_rgba(frame: &[u8], max_width: u32, max_height: u32, dst: Option<Vec<u8>>) -> Result<(Vec<u8>, u32, u32), JpegError> {
+    let len = max_width as usize * max_height as usize * 4;
+    let mut dst = dst.unwrap_or_default();
+    // a buffer of this size already has its length: resize then neither allocates nor writes
+    dst.resize(len, 0);
     let (mut width, mut height) = (0u32, 0u32);
     // SAFETY: `frame` and `dst` are valid for the lengths passed; the shim writes only into
     // `dst` (at most `dst.len()` bytes), `width` and `height`, and keeps no pointer.

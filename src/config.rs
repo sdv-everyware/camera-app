@@ -39,7 +39,7 @@ pub struct CommandLineArgs {
     #[arg(short = 'i', long, default_value = "camera.dcf")]
     pub document_id: String,
     /// Seconds between two stills in the tile.
-    #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u64).range(1..=600))]
+    #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u64).range(1..=600))]
     pub still_interval: u64,
     /// Frames a second of the full view, at most: the camera's fastest rate up to it.
     #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u32).range(1..=60))]

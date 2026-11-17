@@ -18,7 +18,8 @@
 //!
 //! At most one picture per zone is on its way to the looper: the next one goes when the storage
 //! holds the last one sent. A looper that falls behind (a slow panel) gets fewer frames, not a
-//! queue of 3.7 MB frames.
+//! queue of 3.7 MB frames. The pixels of a picture the storage let go of come back as the
+//! buffer of a later frame (`spare`): a live frame allocates nothing.
 
 use crate::config::Zone;
 use customizations::ImageContentData;
@@ -36,7 +37,12 @@ struct Slot {
     sent: Option<Arc<Vec<u8>>>,
     /// The size the zone's frame was told (its ImageContentData).
     told: Option<(u32, u32)>,
+    /// Pictures sent before the last one, until the storage and the renderers let go of them.
+    retired: Vec<Arc<Vec<u8>>>,
 }
+
+/// Pictures kept for their buffers at most: the storage holds one, the looper one on its way.
+const RETIRED: usize = 3;
 
 pub struct Pictures {
     storage: ResourceManager,
@@ -49,7 +55,7 @@ impl Pictures {
     pub fn new(storage: &ResourceManager, client: ResourceManagerClient) -> Result<Pictures, String> {
         let mut storage = storage.clone();
         let mut slot = || -> Result<Slot, String> {
-            Ok(Slot { token: storage.add_resource(RawImageData::default())?, sent: None, told: None })
+            Ok(Slot { token: storage.add_resource(RawImageData::default())?, sent: None, told: None, retired: Vec::new() })
         };
         let slots = [slot()?, slot()?];
         Ok(Pictures { storage, client, slots })
@@ -64,13 +70,25 @@ impl Pictures {
         }
     }
 
+    /// The buffer of an earlier picture of `zone` that nobody holds any more, for the next frame.
+    pub fn spare(&mut self, zone: Zone) -> Option<Vec<u8>> {
+        let retired = &mut self.slots[zone as usize].retired;
+        let i = retired.iter().position(|a| Arc::strong_count(a) == 1)?;
+        Arc::try_unwrap(retired.swap_remove(i)).ok()
+    }
+
     /// Sends a picture of `zone`. Some(content) when the zone's frame must be told (its first
     /// picture, another size): the caller hands it to the reducer.
     pub fn send(&mut self, zone: Zone, rgba: Vec<u8>, width: u32, height: u32) -> Result<Option<ImageContentData>, String> {
         let data = Arc::new(rgba);
         let slot = &mut self.slots[zone as usize];
         self.client.update(slot.token, RawImageData::from_arc_data(data.clone(), width, height)).map_err(|e| format!("{e:?}"))?;
-        slot.sent = Some(data);
+        if let Some(old) = slot.sent.replace(data) {
+            slot.retired.push(old);
+            if slot.retired.len() > RETIRED {
+                slot.retired.remove(0);
+            }
+        }
         if slot.told == Some((width, height)) {
             return Ok(None);
         }
