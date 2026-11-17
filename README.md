@@ -40,7 +40,11 @@ with the driver `uvcvideo`; a UVC camera's metadata node and the SoC's codecs ar
 `--device`. Of its formats it takes the largest picture up to `--max-size` (1280x720) that
 comes at 15 frames a second or more, MJPEG before YUYV (`src/format.rs`). MJPEG is decoded with
 libjpeg-turbo (`src/jpeg_shim.c`, the tree's external/libjpeg-turbo), YUYV converted in
-`src/picture.rs`. A frame the driver or the decoder marks as broken is dropped.
+`src/picture.rs`. A frame the driver or the decoder marks as broken is dropped. The camera keeps
+its own exposure: in a dim room this webcam sends 25 frames a second where it offers 30 (its
+"exposure, auto priority"), and the live view shows each of them. The thread that decodes asks
+the scheduler for half a core's capacity (uclamp.min, `sched_setattr`): on a little core at its
+idle clock a 720p frame takes 25 ms, on a big one 5 to 10.
 
 ```bash
 adb shell /data/local/tmp/camera-app/camera_app --probe    # the UVC devices and their formats
@@ -111,10 +115,16 @@ client does not connect again, and its service starts it again.
 
 `design/camera-patch.js` draws the two roots, `#camera-tile` (904 x 360) and `#camera-live`
 (1920 x 1080): a plain frame for the picture, the time chip, the offline state. Their sizes are
-the panel's nodes and must stay so: harry draws a zone with the node's size as the source rect
-(a buffer of another size lands 1:1 in the corner), and a zone client keeps the size of its
-first configure (a later one is only logged). A zone hidden when it binds (the full view) gets
-no configure and renders the size asked for (`config.rs`, `Zone::size`).
+the panel's nodes. A zone client keeps the size of its first configure (a later one is only
+logged), and a zone hidden when it binds (the full view) gets no configure and renders the size
+asked for (`config.rs`, `Zone::size`). harry clean/cut2 draws a zone with the node's size as the
+source rect, so there a buffer of another size lands 1:1 in the corner; super-harry 0960c70
+(feature/zone-scale, in the RB3's image) scales it into the node. With the sizes equal both
+show the same.
+
+The picture frames are plain rectangles (radius 0): harry draws a picture or a zone only on a
+plain frame (the display list's RoundRect arm has neither, `generation.rs`), so a rounded corner
+comes from a clipping parent, as the panel's tile does.
 
 ```bash
 packages/services/display_safety/utils/camera-app/design/build.sh   # design/camera.fig, data/camera.dcf

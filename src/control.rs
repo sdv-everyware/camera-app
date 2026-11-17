@@ -220,12 +220,24 @@ mod tests {
     use std::io::{BufRead, BufReader};
     use std::sync::mpsc::{channel, Receiver};
 
-    /// A socket path of its own in the temp directory.
+    /// A socket path of its own under /tmp: short, as a unix socket's path must be (108 bytes;
+    /// $TMPDIR may be longer). The directory goes with the test (`Dir`).
     fn path(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("camera-app-test-{}-{name}", std::process::id()));
+        let dir = std::path::PathBuf::from(format!("/tmp/cam-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("har-camera")
+    }
+
+    /// Removes the test's directory when the test ends, also when it fails.
+    struct Dir(std::path::PathBuf);
+
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            if let Some(dir) = self.0.parent() {
+                let _ = std::fs::remove_dir_all(dir);
+            }
+        }
     }
 
     fn line(r: &mut BufReader<UnixStream>) -> String {
@@ -241,6 +253,7 @@ mod tests {
     #[test]
     fn a_client_hears_the_state_and_its_live_ends_with_it() {
         let p = path("live");
+        let _dir = Dir(p.clone());
         let (tx, rx) = channel();
         let board = start(&p, tx).unwrap();
         let mode_bits = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
@@ -264,6 +277,7 @@ mod tests {
     #[test]
     fn an_unknown_word_ends_the_connection() {
         let p = path("word");
+        let _dir = Dir(p.clone());
         let (tx, rx) = channel();
         let _board = start(&p, tx).unwrap();
         let client = UnixStream::connect(&p).unwrap();
@@ -279,15 +293,18 @@ mod tests {
     #[test]
     fn a_served_socket_is_not_taken_over_a_stale_one_is_and_a_file_is_left() {
         let p = path("served");
+        let _dir = Dir(p.clone());
         let (tx, _rx) = channel();
         let _first = start(&p, tx.clone()).unwrap();
         assert_eq!(start(&p, tx.clone()).err().map(|e| e.kind()), Some(std::io::ErrorKind::AddrInUse));
         // a socket nobody answers on: what a run before left
         let stale = path("stale");
+        let _stale_dir = Dir(stale.clone());
         drop(UnixListener::bind(&stale).unwrap());
         assert!(start(&stale, tx.clone()).is_ok());
         // a plain file is not removed
         let file = path("file");
+        let _file_dir = Dir(file.clone());
         std::fs::write(&file, b"x").unwrap();
         assert!(start(&file, tx).is_err());
         assert_eq!(std::fs::read(&file).unwrap(), b"x");
