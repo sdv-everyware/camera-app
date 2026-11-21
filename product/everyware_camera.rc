@@ -15,7 +15,9 @@
 # gone or new): init starts it again, and it connects to the new panel. Root, because the panel's
 # Wayland socket in its runtime directory (0750 root:oem_2900) is root's alone; the group camera
 # opens /dev/video*. SELinux domain everyware_camera (the board's sepolicy/vendor).
-service everyware_camera /vendor/bin/camera_app --data-path /vendor/etc/camera-app
+# --clip: without a camera the app shows the image's clip (README.md "The clip").
+# --still-interval 1: the tile's picture every second (the app's own default is 2).
+service everyware_camera /vendor/bin/camera_app --data-path /vendor/etc/camera-app --clip /vendor/etc/camera-app/clip.mjpeg --still-interval 1
     class main
     user root
     group camera

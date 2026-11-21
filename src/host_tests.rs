@@ -11,10 +11,13 @@
 // limitations under the License.
 
 //! The modules that need neither the camera nor the panel, as host tests
-//! (`m camera_app_host_test`): the choice of the format and its rates, the cut to a zone's
-//! aspect and YUYV, the control socket (a socket in the temp directory) with its lines and the
-//! live demand, the still schedule, broken frames, the offline words and the live view's meter.
+//! (`m camera_app_host_test`): the pictures of a clip and its pace, the choice of the format and
+//! its rates, the cut to a zone's aspect and YUYV, the control socket (a socket in the temp
+//! directory) with its lines and the live demand, the still schedule, broken frames, the offline
+//! words and the live view's meter.
 
+#[allow(dead_code)]
+mod clip;
 #[allow(dead_code)]
 mod control;
 #[allow(dead_code)]

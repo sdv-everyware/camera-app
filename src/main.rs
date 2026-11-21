@@ -22,7 +22,8 @@
 //! ```
 //!
 //! The tile shows a still every few seconds; the full view, while the panel shows it, live
-//! video. Without a camera both show the offline state, and the camera is looked for again.
+//! video. Without a camera both show the offline state, and the camera is looked for again;
+//! started with `--clip`, they show that clip instead (source.rs).
 
 use crate::actions::CameraAction;
 use crate::presenter::UiModelPresenter;
@@ -47,6 +48,7 @@ use std::time::Duration;
 mod actions;
 mod camera;
 mod capture;
+mod clip;
 mod config;
 mod control;
 mod format;
@@ -57,6 +59,7 @@ mod pictures;
 mod presenter;
 mod protocol;
 mod resource_loader;
+mod source;
 mod state;
 mod status;
 mod ui_event_listener;
@@ -154,9 +157,13 @@ fn main() {
 
     camera::spawn(
         camera::Settings {
-            device: args.device.clone(),
-            max,
-            live_fps: args.live_fps,
+            wanted: source::Wanted {
+                device: args.device.clone(),
+                max,
+                live_fps: args.live_fps,
+                clip: args.clip.clone(),
+                clip_fps: args.clip_fps,
+            },
             still_interval: Duration::from_secs(args.still_interval),
         },
         modes_rx,

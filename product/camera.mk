@@ -18,6 +18,7 @@
 # everyware_camera.
 PRODUCT_PACKAGES += \
     camera_app \
+    camera_app_clip \
     camera_app_dcf
 PRODUCT_COPY_FILES += \
     packages/services/display_safety/utils/camera-app/product/everyware_camera.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/everyware/everyware_camera.rc

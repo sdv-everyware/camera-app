@@ -15,16 +15,17 @@
 //! one frame every `still_interval` becomes the tile's picture; live (the panel shows the full
 //! view, control.rs) the stream runs at the live rate and every frame becomes the full view's
 //! picture, the tile still getting its still. Without a camera, or when it stops, the zones
-//! show the offline state and the thread looks for the camera again every RETRY.
+//! show the offline state and the thread looks for the camera again every RETRY. With a clip
+//! (`--clip`, source.rs) the clip's pictures come instead while there is no camera.
 //!
 //! ```text
-//! V4L2 ──frame──► decode (MJPEG: libjpeg-turbo, YUYV: picture.rs) ──cut to the zone's aspect──►
+//! V4L2 or the clip ──frame──► decode (MJPEG: libjpeg-turbo, YUYV: picture.rs) ──cut to the zone's aspect──►
 //!   pictures.rs (the looper's resource client) ──► harry redraws the zone that shows it
 //! status changes ──► CameraAction (the offline state) and control::Board (the panel's chip)
 //! ```
 
 use crate::actions::CameraAction;
-use crate::capture::{Camera, CaptureError, Frame};
+use crate::capture::{CaptureError, Frame};
 use crate::config::Zone;
 use crate::control::Board;
 use crate::format::Pixels;
@@ -32,9 +33,9 @@ use crate::jpeg;
 use crate::meter::Live;
 use crate::picture::{self, Rect};
 use crate::pictures::Pictures;
+use crate::source::{Source, Wanted};
 use crate::status::{Health, Offline, Status, Stills};
 use harry::reducer::Actions;
-use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -60,11 +61,8 @@ const READY_WAIT: Duration = Duration::from_millis(30);
 const UCLAMP_MIN: u32 = 512;
 
 pub struct Settings {
-    /// The device, or None: the first UVC capture device.
-    pub device: Option<PathBuf>,
-    /// The largest frame taken from the camera.
-    pub max: (u32, u32),
-    pub live_fps: u32,
+    /// The camera, and the clip that stands in for it (source.rs).
+    pub wanted: Wanted,
     pub still_interval: Duration,
 }
 
@@ -134,7 +132,7 @@ impl Worker {
         self.publish(Status::Starting);
         loop {
             self.take_modes();
-            match Camera::open(self.settings.device.as_deref(), self.settings.max, self.settings.live_fps, self.live) {
+            match Source::open(&self.settings.wanted, self.live) {
                 Ok(mut camera) => {
                     self.stills.reset();
                     self.health = Health::default();
@@ -160,7 +158,7 @@ impl Worker {
     }
 
     /// Streams until the camera fails; the error says why.
-    fn stream(&mut self, camera: &mut Camera) -> CaptureError {
+    fn stream(&mut self, camera: &mut Source) -> CaptureError {
         let mut stalls = 0;
         loop {
             let was_live = self.live;
@@ -204,7 +202,7 @@ impl Worker {
     /// One frame: the full view's picture when live, the tile's when a still is due. A live
     /// frame is decoded whatever the looper does and then waits for it (READY_WAIT): the decode
     /// and the panel's frame overlap. A tile whose last still the looper has not taken skips it.
-    fn on_frame(&mut self, camera: &Camera, frame: &Frame) {
+    fn on_frame(&mut self, camera: &Source, frame: &Frame) {
         let now = Instant::now();
         let still = self.stills.due(now) && now.duration_since(self.started) >= WARM_UP;
         let mut zones = Vec::new();
@@ -328,10 +326,10 @@ impl Worker {
 
 /// The frame as the pictures of `zones`, each cut to its zone's aspect: RGBA with its size.
 /// None when the frame does not decode.
-fn pictures(camera: &Camera, frame: &Frame, zones: &[Zone], spare: Option<Vec<u8>>) -> Option<Vec<(Vec<u8>, u32, u32)>> {
+fn pictures(camera: &Source, frame: &Frame, zones: &[Zone], spare: Option<Vec<u8>>) -> Option<Vec<(Vec<u8>, u32, u32)>> {
     let bytes = camera.bytes(frame);
-    let (w, h) = (camera.width, camera.height);
-    match camera.choice.pixels {
+    let (w, h, stride) = camera.geometry();
+    match camera.pixels() {
         Pixels::Mjpeg => {
             let (rgba, dw, dh) = match jpeg::decode_rgba(bytes, w, h, spare) {
                 Ok(d) => d,
@@ -359,7 +357,7 @@ fn pictures(camera: &Camera, frame: &Frame, zones: &[Zone], spare: Option<Vec<u8
             .iter()
             .map(|z| {
                 let r = picture::cover((w, h), z.size());
-                picture::yuyv_to_rgba(bytes, camera.stride as usize, r).map(|px| (px, r.width, r.height))
+                picture::yuyv_to_rgba(bytes, stride as usize, r).map(|px| (px, r.width, r.height))
             })
             .collect(),
     }
