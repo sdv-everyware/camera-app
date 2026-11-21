@@ -10,13 +10,13 @@ its looper is a Wayland zone client (`libharry_app_platform_specific_client`), a
                                │                                            │ har_zone, dmabuf
                                └─state─► reducer ─► presenter ─► UI model ──┘
                                                                             ▼
- panel (smarthome_app)  #camera/feed ◄─── #zone/camera       (904 x 360, a still every 2 s)
+ panel (smarthome_app)  #camera/feed ◄─── #zone/camera       (904 x 360, a still every 1 s)
                         full view    ◄─── #zone/camera-live  (1920 x 1080, live while shown)
    tile's ↗ / close ──"live" / "still"──► control socket har-camera ──► camera thread
    LIVE chip       ◄──"on" / "off"──────┘
 ```
 
-- **The tile**: a still every `--still-interval` seconds (2), cut to the tile's aspect (the
+- **The tile**: a still every `--still-interval` seconds (2; the image's service asks for 1), cut to the tile's aspect (the
   middle of the picture, never stretched), with the time it was taken at the top right. The
   stream runs at the camera's slowest rate from 5 frames a second.
 - **The full view**: while the panel says `live`, every frame goes to `#zone/camera-live`, at
